@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { ComponentPreview } from "./ComponentPreview";
 import type { Variant } from "../lib/tauri-bridge";
+import { downloadAllVariantsZip, downloadVariantHtml } from "../lib/exportVariants";
 
 interface VariantGalleryProps {
   variants: Variant[];
   runState: string | null;
+  runId: string | null;
 }
 
 type ViewMode = "gallery" | "detail" | "fullscreen";
 
-export function VariantGallery({ variants, runState }: VariantGalleryProps) {
+export function VariantGallery({ variants, runState, runId }: VariantGalleryProps) {
   const [selectedVariant, setSelectedVariant] = useState<Variant | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("gallery");
 
@@ -51,6 +53,18 @@ export function VariantGallery({ variants, runState }: VariantGalleryProps) {
 
   return (
     <div style={styles.container}>
+      <div style={styles.toolbar}>
+        <button
+          type="button"
+          style={styles.toolbarBtnPrimary}
+          onClick={() => downloadAllVariantsZip(variants, runId)}
+        >
+          Download all as .zip
+        </button>
+        <span style={styles.toolbarHint}>
+          Folder of standalone HTML files — open any file in a browser. Use “Save .html” on a card for one variant.
+        </span>
+      </div>
       <div style={styles.grid}>
         {variants.map((v, i) => (
           <div
@@ -71,8 +85,15 @@ export function VariantGallery({ variants, runState }: VariantGalleryProps) {
               <ComponentPreview code={v.code} height={180} showFullscreenButton />
             </div>
             <div style={styles.cardFooter}>
-              <button style={styles.cardBtn} onClick={() => openFullscreen(v)}>Fullscreen</button>
-              <button style={styles.cardBtn} onClick={() => openDetail(v)}>Details</button>
+              <button type="button" style={styles.cardBtn} onClick={() => openFullscreen(v)}>Fullscreen</button>
+              <button type="button" style={styles.cardBtn} onClick={() => openDetail(v)}>Details</button>
+              <button
+                type="button"
+                style={styles.cardBtn}
+                onClick={() => downloadVariantHtml(v, runId)}
+              >
+                Save .html
+              </button>
             </div>
           </div>
         ))}
@@ -90,7 +111,16 @@ export function VariantGallery({ variants, runState }: VariantGalleryProps) {
                 </span>
               )}
             </span>
-            <button onClick={closeOverlay} style={styles.fullscreenClose}>Exit Fullscreen</button>
+            <div style={styles.fullscreenActions}>
+              <button
+                type="button"
+                onClick={() => downloadVariantHtml(selectedVariant, runId)}
+                style={styles.fullscreenDownload}
+              >
+                Save .html
+              </button>
+              <button type="button" onClick={closeOverlay} style={styles.fullscreenClose}>Exit Fullscreen</button>
+            </div>
           </div>
           <iframe
             srcDoc={selectedVariant.code}
@@ -116,8 +146,15 @@ export function VariantGallery({ variants, runState }: VariantGalleryProps) {
                 )}
               </h3>
               <div style={styles.modalActions}>
-                <button onClick={() => setViewMode("fullscreen")} style={styles.modalBtn}>Fullscreen</button>
-                <button onClick={closeOverlay} style={styles.close}>&times;</button>
+                <button
+                  type="button"
+                  onClick={() => downloadVariantHtml(selectedVariant, runId)}
+                  style={styles.modalBtnSecondary}
+                >
+                  Download .html
+                </button>
+                <button type="button" onClick={() => setViewMode("fullscreen")} style={styles.modalBtn}>Fullscreen</button>
+                <button type="button" onClick={closeOverlay} style={styles.close}>&times;</button>
               </div>
             </div>
             {selectedVariant.scores.composite > 0 && (
@@ -169,6 +206,34 @@ export function VariantGallery({ variants, runState }: VariantGalleryProps) {
 
 const styles: Record<string, React.CSSProperties> = {
   container: { flex: 1, overflow: "auto", padding: "16px 20px" },
+  toolbar: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: "12px",
+    marginBottom: "16px",
+    padding: "12px 14px",
+    borderRadius: "10px",
+    border: "1px solid rgba(255,255,255,0.08)",
+    background: "rgba(255,255,255,0.02)",
+  },
+  toolbarBtnPrimary: {
+    padding: "8px 16px",
+    borderRadius: "8px",
+    border: "none",
+    background: "linear-gradient(135deg, #6366f1, #8b5cf6)",
+    color: "#fff",
+    fontSize: "12px",
+    fontWeight: 600,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  toolbarHint: {
+    fontSize: "12px",
+    color: "rgba(255,255,255,0.45)",
+    lineHeight: 1.45,
+    maxWidth: 520,
+  },
   empty: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: 200 },
   emptyText: { fontSize: "14px", color: "rgba(255,255,255,0.35)" },
   grid: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "14px" },
@@ -183,10 +248,10 @@ const styles: Record<string, React.CSSProperties> = {
   score: { fontSize: "18px", fontWeight: 700, fontFamily: "'JetBrains Mono', monospace" },
   previewWrap: { padding: "0 8px" },
   cardFooter: {
-    display: "flex", gap: "8px", padding: "8px 14px 12px",
+    display: "flex", flexWrap: "wrap", gap: "8px", padding: "8px 14px 12px",
   },
   cardBtn: {
-    flex: 1, padding: "6px 0", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.08)",
+    flex: "1 1 30%", minWidth: "72px", padding: "6px 4px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.08)",
     background: "rgba(255,255,255,0.03)", color: "rgba(255,255,255,0.5)", fontSize: "11px",
     fontWeight: 500, cursor: "pointer", transition: "all 0.15s",
   },
@@ -200,7 +265,13 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "8px 16px", background: "rgba(0,0,0,0.9)", borderBottom: "1px solid rgba(255,255,255,0.1)",
     flexShrink: 0,
   },
+  fullscreenActions: { display: "flex", alignItems: "center", gap: "10px" },
   fullscreenTitle: { fontSize: "13px", fontWeight: 600, color: "rgba(255,255,255,0.7)" },
+  fullscreenDownload: {
+    padding: "6px 14px", borderRadius: "6px", border: "1px solid rgba(99,102,241,0.4)",
+    background: "rgba(99,102,241,0.15)", color: "#c7d2fe", fontSize: "12px",
+    cursor: "pointer", fontWeight: 500,
+  },
   fullscreenClose: {
     padding: "6px 14px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.15)",
     background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.7)", fontSize: "12px",
@@ -218,6 +289,10 @@ const styles: Record<string, React.CSSProperties> = {
   modalBtn: {
     padding: "6px 14px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.1)",
     background: "rgba(99,102,241,0.1)", color: "#a5b4fc", fontSize: "12px", fontWeight: 500, cursor: "pointer",
+  },
+  modalBtnSecondary: {
+    padding: "6px 14px", borderRadius: "6px", border: "1px solid rgba(255,255,255,0.12)",
+    background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.75)", fontSize: "12px", fontWeight: 500, cursor: "pointer",
   },
   close: { background: "none", border: "none", color: "rgba(255,255,255,0.4)", fontSize: "24px", cursor: "pointer" },
   scoreBar: { display: "flex", gap: 8, padding: "10px 20px", borderBottom: "1px solid rgba(255,255,255,0.06)" },

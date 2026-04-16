@@ -60,6 +60,7 @@ function App() {
       <VariantGallery
         variants={engine.variants}
         runState={engine.activeRunState}
+        runId={engine.activeRunId}
       />
 
       <MetricsPanel
