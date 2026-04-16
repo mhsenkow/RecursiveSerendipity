@@ -82,20 +82,19 @@ export async function runEvolutionLoop(
       const isFirst = iteration === 1;
       const previousVariants = db.getVariants(runId);
 
-      // Determine what to generate this iteration
-      let variantsToGenerate = numVariants;
-      let parentVariants: Variant[] = [];
+      /** Best-first survivors we copy into this iteration (no new LLM call). */
+      let keepers: Variant[] = [];
+      /** Worst half we regenerate from critic feedback. */
+      let parentsToRefine: Variant[] = [];
 
       if (!isFirst && previousVariants.length > 0) {
-        // Sort by score, refine the bottom half by regenerating them
         const sorted = [...previousVariants]
           .filter((v) => v.iteration === iteration - 1)
           .sort((a, b) => b.scores.composite - a.scores.composite);
 
-        // Keep the top half, regenerate the bottom half based on critiques
         const keepCount = Math.ceil(sorted.length / 2);
-        parentVariants = sorted.slice(keepCount);
-        variantsToGenerate = parentVariants.length || numVariants;
+        keepers = sorted.slice(0, keepCount);
+        parentsToRefine = sorted.slice(keepCount);
       }
 
       db.updateRunState(runId, "generating", iteration);
@@ -105,28 +104,68 @@ export async function runEvolutionLoop(
         timestamp: new Date().toISOString(),
       });
 
-      // === GENERATE N VARIANTS ===
-      for (let vi = 0; vi < variantsToGenerate; vi++) {
+      // === POPULATE THIS ITERATION: carry forward best half + regenerate worst half ===
+      if (!isFirst && keepers.length > 0) {
+        for (let ki = 0; ki < keepers.length; ki++) {
+          if (signal.aborted) throw new Error("Aborted");
+          const prev = keepers[ki];
+          broadcast({
+            type: "log",
+            data: {
+              runId,
+              iteration,
+              message: `Carrying forward variant ${ki + 1}/${keepers.length} (composite ${prev.scores.composite}/10) — no regen.`,
+            },
+            timestamp: new Date().toISOString(),
+          });
+          const carried: Variant = {
+            id: crypto.randomUUID(),
+            runId,
+            iteration,
+            variantIndex: ki,
+            code: prev.code,
+            critique: prev.critique,
+            visionFeedback: prev.visionFeedback,
+            screenshotBase64: prev.screenshotBase64,
+            scores: { ...prev.scores },
+            parentVariantId: prev.id,
+            createdAt: new Date().toISOString(),
+          };
+          db.saveVariant(carried);
+          broadcast({ type: "variant", data: carried, timestamp: new Date().toISOString() });
+        }
+      }
+
+      const refineCount = isFirst ? numVariants : parentsToRefine.length;
+      const refineOffset = isFirst ? 0 : keepers.length;
+
+      for (let vi = 0; vi < refineCount; vi++) {
         if (signal.aborted) throw new Error("Aborted");
 
         const variantNum = vi + 1;
         broadcast({
           type: "log",
-          data: { runId, iteration, message: `Generating variant ${variantNum}/${variantsToGenerate}...` },
+          data: {
+            runId,
+            iteration,
+            message: isFirst
+              ? `Generating variant ${variantNum}/${refineCount}...`
+              : `Regenerating weaker variant ${variantNum}/${refineCount}...`,
+          },
           timestamp: new Date().toISOString(),
         });
 
         let prompt: string;
 
         if (isFirst) {
-          prompt = `Create variant ${variantNum} of ${variantsToGenerate}. Each variant should be a DIFFERENT creative interpretation.
+          prompt = `Create variant ${variantNum} of ${refineCount}. Each variant should be a DIFFERENT creative interpretation.
 
 Project: ${seed}
 
 Make this variant unique — try a different visual style, layout, or interaction approach than the others.
 Output a complete HTML file.`;
         } else {
-          const parent = parentVariants[vi];
+          const parent = parentsToRefine[vi];
           prompt = `Here is a previous version that scored ${parent.scores.composite}/10:
 
 \`\`\`html
@@ -136,13 +175,14 @@ ${parent.code}
 Critic feedback:
 ${parent.critique}
 
-Improve this app based on the feedback. Make it significantly better.
+Improve this app based on the feedback. If the game or app already works, preserve the core mechanics and controls — fix bugs and polish incrementally rather than rewriting from scratch unless it is broken.
 Output a complete HTML file.`;
         }
 
-        const relay = createStreamRelay(broadcast, runId, `Generating #${variantNum}`);
+        const displayIdx = refineOffset + vi + 1;
+        const relay = createStreamRelay(broadcast, runId, `Generating #${displayIdx}`);
         const response = await ollama.generate(generatorModel, prompt, GENERATOR_SYSTEM, {
-          temperature: isFirst ? 0.9 : 0.6,
+          temperature: isFirst ? 0.9 : 0.55,
           num_predict: 8192,
         }, relay.onToken);
         relay.stop();
@@ -153,13 +193,13 @@ Output a complete HTML file.`;
           id: crypto.randomUUID(),
           runId,
           iteration,
-          variantIndex: vi,
+          variantIndex: refineOffset + vi,
           code,
           critique: "",
           visionFeedback: "",
           screenshotBase64: "",
           scores: { quality: 0, visual: 0, composite: 0 },
-          parentVariantId: isFirst ? null : (parentVariants[vi]?.id ?? null),
+          parentVariantId: isFirst ? null : (parentsToRefine[vi]?.id ?? null),
           createdAt: new Date().toISOString(),
         };
 
@@ -182,6 +222,24 @@ Output a complete HTML file.`;
 
         const variant = iterVariants[vi];
         const num = vi + 1;
+
+        const alreadyEvaluated =
+          variant.critique.trim().length > 0 &&
+          variant.scores.composite > 0 &&
+          variant.scores.quality > 0;
+
+        if (alreadyEvaluated) {
+          broadcast({
+            type: "log",
+            data: {
+              runId,
+              iteration,
+              message: `#${num}: carried forward — skipping duplicate critic/vision (composite ${variant.scores.composite}/10).`,
+            },
+            timestamp: new Date().toISOString(),
+          });
+          continue;
+        }
 
         // --- Step 1: Screenshot the rendered app ---
         broadcast({
