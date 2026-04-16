@@ -1,0 +1,53 @@
+# RecursiveSerendipity - Project Rules
+
+## What This Project Is
+RecursiveSerendipity is a local-first autonomous agentic runner that executes evolutionary perfection loops. It generates, tests, critiques, and refines code artifacts recursively until they meet quality thresholds, using local LLMs via Ollama on a 192GB M2 Ultra Mac Studio.
+
+## Architecture
+- **Tauri v2 Shell** (Rust + React): Desktop app frame, IPC, process management
+- **Bun Engine** (TypeScript): Core logic in `engine/` directory, runs as HTTP server on port 9700
+- **LangGraph.js State Machine**: Generator -> BuildChecker -> Evaluator -> Refiner loop
+- **Ollama**: Local LLM inference. Primary models: llama3.3 (generator), deepseek-r1:70b (critic)
+- **SQLite** (via bun:sqlite): Persistence for runs, variants, checkpoints in `data/rs.db`
+- **SSE**: Real-time streaming from engine to Tauri frontend
+
+## Key Directories
+- `engine/` - Bun backend (the brain). Run with `bun run engine/index.ts`
+- `engine/graph/` - LangGraph state machine, nodes, edges
+- `engine/providers/` - Ollama and thermal monitoring
+- `engine/execution/` - Child process management, linting, sandboxing
+- `engine/memory/` - SQLite persistence
+- `engine/heuristics/` - Scoring functions (lint, build, composite)
+- `src/` - React frontend components
+- `src-tauri/` - Rust backend (Tauri v2)
+- `data/` - Runtime data (gitignored)
+
+## Coding Conventions
+- TypeScript strict mode everywhere
+- No `any` types
+- Bun APIs for file/process operations in engine (Bun.spawn, Bun.serve, bun:sqlite)
+- LangGraph Annotation.Root for state schema
+- React functional components with hooks
+- Inline styles with style objects (no CSS-in-JS libraries)
+- All LLM calls go through OllamaProvider's queue (sequential heavyweight inference)
+
+## Running
+1. Start engine: `bun run engine/index.ts` (or `npm run engine`)
+2. Start full app: `npm run tauri dev` (starts Vite + Tauri, engine auto-spawned by Rust backend)
+3. Engine health: `curl http://localhost:9700/health`
+
+## Model Strategy
+- Sequential heavyweight: One model loaded at a time to maximize quality per inference pass
+- OllamaProvider manages a request queue to prevent concurrent model loading
+- Thermal monitoring throttles workload under pressure
+
+## Self-Improvement (Phase 3, not yet implemented)
+- Engine has `self-improve/` directory for future recursive self-improvement
+- Safe zones: heuristic weights, prompt templates, UI components
+- Protected zones: core graph logic, persistence layer, IPC
+
+## Important
+- NEVER make external API calls. All inference is local via Ollama
+- NEVER use Docker or Wasm. Native child_processes only
+- Data directory is gitignored. SQLite WAL mode for concurrent reads
+- The Tauri Rust backend proxies all frontend requests to the Bun engine via HTTP
