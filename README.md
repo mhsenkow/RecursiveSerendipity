@@ -1,4 +1,5 @@
 # RecursiveSerendipity
+<img width="2560" height="1440" alt="image" src="https://github.com/user-attachments/assets/bf1139f8-9202-4161-b4e7-b461f224e7cd" />
 
 Autonomous evolutionary perfection engine. Local-first, recursive code generation powered by local LLMs.
 
